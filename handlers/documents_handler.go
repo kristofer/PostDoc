@@ -106,12 +106,20 @@ func DeleteDocumentsHandler(database *db.DB, tmpl *template.Template, baseURL st
 		}
 
 		// Re-render the page with the error message.
-		total, _ := database.CountDocuments()
+		total, err := database.CountDocuments()
+		if err != nil {
+			log.Printf("count documents error: %v", err)
+			total = 0
+		}
 		totalPages := (total + docsPageSize - 1) / docsPageSize
 		if totalPages < 1 {
 			totalPages = 1
 		}
-		docs, _ := database.ListDocuments(1, docsPageSize)
+		docs, err := database.ListDocuments(1, docsPageSize)
+		if err != nil {
+			log.Printf("list documents error: %v", err)
+			docs = nil
+		}
 
 		data := map[string]interface{}{
 			"Documents":   docs,
