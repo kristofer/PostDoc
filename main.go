@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"flag"
 	"html/template"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kristofer/postdoc/auth"
 	"github.com/kristofer/postdoc/db"
 	"github.com/kristofer/postdoc/handlers"
 )
@@ -43,6 +45,14 @@ func main() {
 	}
 	base = strings.TrimRight(base, "/")
 
+	// Initialise JWT auth with a random secret per process.
+	// Enable Secure cookie flag when the base URL uses HTTPS.
+	jwtSecret := make([]byte, 32)
+	if _, err := rand.Read(jwtSecret); err != nil {
+		log.Fatalf("cannot generate JWT secret: %v", err)
+	}
+	auth.Init(jwtSecret, strings.HasPrefix(base, "https://"))
+
 	// Load HTML templates.
 	tmplGlob := filepath.Join("templates", "*.html")
 	tmpl, err := template.ParseGlob(tmplGlob)
@@ -53,22 +63,31 @@ func main() {
 	// Routes.
 	mux := http.NewServeMux()
 
-	// Upload form.
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			// Let the slug handler deal with it.
-			handlers.ServeDocument(database)(w, r)
-			return
-		}
+	// Public: login / logout.
+	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
+		handlers.LoginHandler(database, tmpl)(w, r)
+	})
+	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
+		handlers.LoginHandler(database, tmpl)(w, r)
+	})
+	mux.Handle("GET /logout", handlers.LogoutHandler())
+
+	// Protected: upload form (root).
+	mux.Handle("GET /", auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := tmpl.ExecuteTemplate(w, "index.html", nil); err != nil {
 			log.Printf("template error: %v", err)
 		}
-	})
+	})))
 
-	// Upload endpoint.
-	mux.Handle("POST /upload", handlers.UploadHandler(database, *uploadDir, tmpl, base))
+	// Protected: upload endpoint.
+	mux.Handle("POST /upload", auth.Middleware(handlers.UploadHandler(database, *uploadDir, tmpl, base)))
 
-	// Short-link document serving.
+	// Protected: admin management.
+	mux.Handle("GET /admin", auth.Middleware(handlers.AdminHandler(database, tmpl)))
+	mux.Handle("POST /admin/add", auth.Middleware(handlers.AddAdminHandler(database, tmpl)))
+	mux.Handle("POST /admin/delete", auth.Middleware(handlers.DeleteAdminHandler(database, tmpl)))
+
+	// Public: short-link document serving.
 	mux.Handle("GET /{slug}", handlers.ServeDocument(database))
 
 	log.Printf("PostDoc listening on %s (base URL: %s)", *addr, base)

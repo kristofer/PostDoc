@@ -56,6 +56,9 @@
     }
     button[type=submit]:hover { background: #1558b0; }
     .note { font-size: 0.8rem; color: #999; margin-top: 0.8rem; text-align: center; }
+    nav { display: flex; gap: 1rem; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    nav a { color: #1a73e8; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -63,6 +66,11 @@
     <h1>PostDoc</h1>
     <p>Upload a PDF and get a short shareable link.</p>
   </header>
+
+  <nav>
+    <a href="/admin">⚙ Admin</a>
+    <a href="/logout">Sign out</a>
+  </nav>
 
   <div class="card">
     <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
