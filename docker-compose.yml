@@ -1,0 +1,43 @@
+# Docker Compose configuration for PostDoc – production use.
+#
+# Persistent data lives in named volumes so the SQLite database and uploaded
+# PDFs survive container restarts and re-deployments.
+#
+# Quick start:
+#   docker compose up -d
+#
+# To set the public base URL (used in generated share links), either:
+#   a) edit the command below, or
+#   b) create a .env file:  BASE_URL=https://example.com
+#      and replace the hard-coded value with ${BASE_URL}
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Named volume keeps the SQLite database across container lifecycles.
+      - db_data:/data
+    command:
+      - /app/postdoc
+      - -addr
+      - ":8080"
+      - -db
+      - /data/postdoc.db
+      - -uploads
+      - /data/uploads
+      # Uncomment and set -base-url when running behind a reverse proxy:
+      # - -base-url
+      # - https://example.com
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/login || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  # db_data persists both the SQLite database file and uploaded PDFs under /data.
+  db_data:
