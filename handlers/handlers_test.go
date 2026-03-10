@@ -69,8 +69,8 @@ func TestUploadHandler_SuccessfulPDF(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, "http://localhost:8080/my-report") {
-		t.Errorf("expected short URL in body, got: %s", body)
+	if !strings.Contains(body, "http://localhost:8080/my-report.pdf") {
+		t.Errorf("expected short URL with .pdf extension in body, got: %s", body)
 	}
 
 	// Confirm the file was written on disk.
@@ -178,12 +178,12 @@ func TestSlugCollisionDeduplication(t *testing.T) {
 	}
 
 	// Both slugs should be present and differ.
-	doc1, err := database.GetBySlug("report")
+	doc1, err := database.GetBySlug("report.pdf")
 	if err != nil || doc1 == nil {
-		t.Fatal("expected slug 'report' to exist")
+		t.Fatal("expected slug 'report.pdf' to exist")
 	}
-	doc2, err := database.GetBySlug("report-1")
+	doc2, err := database.GetBySlug("report-1.pdf")
 	if err != nil || doc2 == nil {
-		t.Fatal("expected slug 'report-1' to exist")
+		t.Fatal("expected slug 'report-1.pdf' to exist")
 	}
 }
