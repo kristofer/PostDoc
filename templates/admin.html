@@ -55,6 +55,15 @@
       transition: background .2s, color .2s;
     }
     .btn-delete:hover { background: #e74c3c; color: #fff; }
+    .success {
+      background: #e6f4ea;
+      color: #1e7e34;
+      border: 1px solid #b7dfbf;
+      border-radius: 8px;
+      padding: 0.7rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
     label { display: block; font-weight: 600; margin-bottom: 0.4rem; font-size: 0.9rem; }
     input[type=text], input[type=password] {
       width: 100%;
@@ -150,6 +159,28 @@
       <input type="password" id="new-password" name="password" autocomplete="new-password" required>
 
       <button type="submit">Add Admin</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Change Password</h2>
+    {{if .PasswordError}}
+    <div class="error">{{.PasswordError}}</div>
+    {{end}}
+    {{if .PasswordSuccess}}
+    <div class="success">✓ {{.PasswordSuccess}}</div>
+    {{end}}
+    <form method="post" action="/admin/change-password">
+      <label for="current-password">Current Password</label>
+      <input type="password" id="current-password" name="current_password" autocomplete="current-password" required>
+
+      <label for="change-new-password">New Password</label>
+      <input type="password" id="change-new-password" name="new_password" autocomplete="new-password" required>
+
+      <label for="confirm-password">Confirm New Password</label>
+      <input type="password" id="confirm-password" name="confirm_password" autocomplete="new-password" required>
+
+      <button type="submit">Change Password</button>
     </form>
   </div>
 </body>

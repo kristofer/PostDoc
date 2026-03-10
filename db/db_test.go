@@ -200,3 +200,30 @@ func TestGetAdminByID_NotFound(t *testing.T) {
 		t.Error("expected nil for non-existent id")
 	}
 }
+
+func TestChangePassword(t *testing.T) {
+	database := openTestDB(t)
+
+	// Change the default admin's password.
+	if err := database.ChangePassword("admin", "newpass"); err != nil {
+		t.Fatalf("change password: %v", err)
+	}
+
+	// Old password should no longer work.
+	admin, err := database.AuthenticateAdmin("admin", "foobar")
+	if err != nil {
+		t.Fatalf("authenticate with old password: %v", err)
+	}
+	if admin != nil {
+		t.Error("expected nil for old password after change")
+	}
+
+	// New password should work.
+	admin, err = database.AuthenticateAdmin("admin", "newpass")
+	if err != nil {
+		t.Fatalf("authenticate with new password: %v", err)
+	}
+	if admin == nil {
+		t.Fatal("expected admin with new password")
+	}
+}

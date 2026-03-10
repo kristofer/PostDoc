@@ -121,7 +121,59 @@ func AddAdminHandler(database *db.DB, tmpl *template.Template) http.HandlerFunc 
 	}
 }
 
-// DeleteAdminHandler handles POST /admin/delete — removes an admin by id.
+// ChangePasswordHandler handles POST /admin/change-password — updates the
+// current user's password after verifying the current password.
+func ChangePasswordHandler(database *db.DB, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		currentPassword := r.FormValue("current_password")
+		newPassword := r.FormValue("new_password")
+		confirmPassword := r.FormValue("confirm_password")
+
+		currentUser, _ := auth.UsernameFromRequest(r)
+
+		var passwordErr, passwordSuccess string
+		if newPassword == "" {
+			passwordErr = "New password is required."
+		} else if newPassword != confirmPassword {
+			passwordErr = "New passwords do not match."
+		} else {
+			admin, err := database.AuthenticateAdmin(currentUser, currentPassword)
+			if err != nil {
+				log.Printf("change password auth error: %v", err)
+				passwordErr = "Internal server error."
+			} else if admin == nil {
+				passwordErr = "Current password is incorrect."
+			} else if err := database.ChangePassword(currentUser, newPassword); err != nil {
+				log.Printf("change password error: %v", err)
+				passwordErr = "Could not update password."
+			} else {
+				passwordSuccess = "Password updated successfully."
+			}
+		}
+
+		admins, err := database.ListAdmins()
+		if err != nil {
+			log.Printf("list admins error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		data := map[string]interface{}{
+			"Admins":          admins,
+			"Username":        currentUser,
+			"PasswordError":   passwordErr,
+			"PasswordSuccess": passwordSuccess,
+		}
+		if err := tmpl.ExecuteTemplate(w, "admin.html", data); err != nil {
+			log.Printf("template error: %v", err)
+		}
+	}
+}
+
 func DeleteAdminHandler(database *db.DB, tmpl *template.Template) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
