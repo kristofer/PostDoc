@@ -68,12 +68,20 @@
       font-size: 0.95rem;
     }
     .back-link:hover { text-decoration: underline; }
+    nav { display: flex; gap: 1rem; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    nav a { color: #1a73e8; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <header>
     <h1>PostDoc</h1>
   </header>
+
+  <nav>
+    <a href="/admin">⚙ Admin</a>
+    <a href="/logout">Sign out</a>
+  </nav>
 
   <div class="card">
     <div class="checkmark">✅</div>
