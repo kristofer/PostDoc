@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PostDoc – Documents</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f5f5f5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+      color: #333;
+    }
+    header { text-align: center; margin-bottom: 2rem; }
+    header h1 { font-size: 2.5rem; color: #1a73e8; }
+    header p  { color: #666; margin-top: 0.4rem; }
+    nav {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+    }
+    nav a {
+      color: #1a73e8;
+      text-decoration: none;
+    }
+    nav a:hover { text-decoration: underline; }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.1);
+      padding: 2rem;
+      width: 100%;
+      max-width: 960px;
+      margin-bottom: 1.5rem;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.2rem;
+      flex-wrap: wrap;
+      gap: 0.8rem;
+    }
+    .card-header h2 { font-size: 1.2rem; color: #333; }
+    .card-header .count { font-size: 0.9rem; color: #666; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th { text-align: left; padding: 0.5rem 0.6rem; color: #666; font-weight: 600; border-bottom: 2px solid #eee; white-space: nowrap; }
+    td { padding: 0.6rem 0.6rem; border-bottom: 1px solid #eee; word-break: break-all; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafafa; }
+    td.url-cell { font-family: monospace; font-size: 0.8rem; }
+    td.url-cell a { color: #1a73e8; text-decoration: none; }
+    td.url-cell a:hover { text-decoration: underline; }
+    .empty { text-align: center; color: #999; padding: 2rem 0; font-size: 0.95rem; }
+    .btn-delete {
+      background: none;
+      border: 1px solid #e74c3c;
+      color: #e74c3c;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: background .2s, color .2s;
+    }
+    .btn-delete:hover { background: #e74c3c; color: #fff; }
+    .btn-delete:disabled { opacity: 0.4; cursor: default; }
+    .btn-delete:disabled:hover { background: none; color: #e74c3c; }
+    .error {
+      background: #fdecea;
+      color: #c0392b;
+      border: 1px solid #f5c6cb;
+      border-radius: 8px;
+      padding: 0.7rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin-top: 1.2rem;
+      font-size: 0.9rem;
+      justify-content: center;
+    }
+    .pagination a {
+      color: #1a73e8;
+      text-decoration: none;
+      padding: 0.3rem 0.8rem;
+      border: 1px solid #1a73e8;
+      border-radius: 6px;
+      transition: background .2s, color .2s;
+    }
+    .pagination a:hover { background: #1a73e8; color: #fff; }
+    .pagination span { color: #666; }
+    input[type=checkbox] { width: 1rem; height: 1rem; cursor: pointer; accent-color: #1a73e8; }
+    /* Modal */
+    dialog {
+      border: none;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.18);
+      padding: 2rem;
+      max-width: 420px;
+      width: 100%;
+    }
+    dialog::backdrop { background: rgba(0,0,0,.45); }
+    dialog h3 { font-size: 1.1rem; margin-bottom: 0.8rem; color: #333; }
+    dialog p { font-size: 0.95rem; color: #555; margin-bottom: 1.4rem; }
+    .dialog-actions { display: flex; gap: 0.8rem; justify-content: flex-end; }
+    .btn-cancel {
+      padding: 0.5rem 1.2rem;
+      border: 1px solid #ccc;
+      background: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: background .2s;
+    }
+    .btn-cancel:hover { background: #f0f0f0; }
+    .btn-confirm-delete {
+      padding: 0.5rem 1.2rem;
+      border: none;
+      background: #e74c3c;
+      color: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: background .2s;
+    }
+    .btn-confirm-delete:hover { background: #c0392b; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PostDoc</h1>
+    <p>Document Tracking</p>
+  </header>
+
+  <nav>
+    <a href="/">⬆ Upload</a>
+    <a href="/admin">⚙ Admin</a>
+    <a href="/logout">Sign out ({{.Username}})</a>
+  </nav>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>Uploaded Documents</h2>
+      <span class="count">{{.TotalDocs}} document{{if ne .TotalDocs 1}}s{{end}} total</span>
+      <button id="btn-delete-selected" class="btn-delete" disabled
+        onclick="openDeleteModal()">Delete Selected</button>
+    </div>
+
+    {{if .Error}}
+    <div class="error">{{.Error}}</div>
+    {{end}}
+
+    <form id="delete-form" method="post" action="/documents/delete">
+      {{if .Documents}}
+      <table>
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="select-all" title="Select all"></th>
+            <th>Filename</th>
+            <th>Uploaded By</th>
+            <th>Uploaded At</th>
+            <th>Size</th>
+            <th>URL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Documents}}
+          <tr>
+            <td><input type="checkbox" name="ids" value="{{.ID}}" class="row-check"></td>
+            <td>{{.Filename}}</td>
+            <td>{{if .UploadedBy}}{{.UploadedBy}}{{else}}<span style="color:#999">—</span>{{end}}</td>
+            <td>{{.FmtUploadedAt}}</td>
+            <td>{{.FmtSize}}</td>
+            <td class="url-cell"><a href="{{$.BaseURL}}/{{.Slug}}" target="_blank">{{$.BaseURL}}/{{.Slug}}</a></td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <p class="empty">No documents have been uploaded yet.</p>
+      {{end}}
+    </form>
+
+    {{if gt .TotalPages 1}}
+    <div class="pagination">
+      {{if .HasPrev}}<a href="/documents?page={{.PrevPage}}">← Prev</a>{{end}}
+      <span>Page {{.CurrentPage}} of {{.TotalPages}}</span>
+      {{if .HasNext}}<a href="/documents?page={{.NextPage}}">Next →</a>{{end}}
+    </div>
+    {{end}}
+  </div>
+
+  <!-- Confirmation modal -->
+  <dialog id="delete-modal">
+    <h3>Confirm Deletion</h3>
+    <p id="delete-modal-msg">Are you sure you want to delete the selected documents? This action cannot be undone.</p>
+    <div class="dialog-actions">
+      <button type="button" class="btn-cancel" onclick="document.getElementById('delete-modal').close()">Cancel</button>
+      <button type="button" class="btn-confirm-delete" onclick="submitDelete()">Delete</button>
+    </div>
+  </dialog>
+
+  <script>
+    const selectAll = document.getElementById('select-all');
+    const btnDelete = document.getElementById('btn-delete-selected');
+    const rowChecks = document.querySelectorAll('.row-check');
+    const modal = document.getElementById('delete-modal');
+    const modalMsg = document.getElementById('delete-modal-msg');
+
+    function updateDeleteButton() {
+      const checked = document.querySelectorAll('.row-check:checked').length;
+      btnDelete.disabled = checked === 0;
+      if (selectAll) {
+        selectAll.indeterminate = checked > 0 && checked < rowChecks.length;
+        selectAll.checked = rowChecks.length > 0 && checked === rowChecks.length;
+      }
+    }
+
+    if (selectAll) {
+      selectAll.addEventListener('change', () => {
+        rowChecks.forEach(cb => { cb.checked = selectAll.checked; });
+        updateDeleteButton();
+      });
+    }
+
+    rowChecks.forEach(cb => cb.addEventListener('change', updateDeleteButton));
+
+    function openDeleteModal() {
+      const count = document.querySelectorAll('.row-check:checked').length;
+      modalMsg.textContent = 'Are you sure you want to delete ' + count +
+        ' document' + (count === 1 ? '' : 's') + '? This action cannot be undone.';
+      modal.showModal();
+    }
+
+    function submitDelete() {
+      modal.close();
+      document.getElementById('delete-form').submit();
+    }
+  </script>
+</body>
+</html>

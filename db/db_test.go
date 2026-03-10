@@ -19,7 +19,7 @@ func openTestDB(t *testing.T) *db.DB {
 func TestInsertAndGetBySlug(t *testing.T) {
 	database := openTestDB(t)
 
-	id, err := database.InsertDocument("my-doc", "My Doc.pdf", "/uploads/my-doc.pdf")
+	id, err := database.InsertDocument("my-doc", "My Doc.pdf", "/uploads/my-doc.pdf", "admin", 0)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestSlugExists(t *testing.T) {
 		t.Error("expected false before insert")
 	}
 
-	if _, err := database.InsertDocument("x", "x.pdf", "/tmp/x.pdf"); err != nil {
+	if _, err := database.InsertDocument("x", "x.pdf", "/tmp/x.pdf", "", 0); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 
@@ -76,16 +76,161 @@ func TestSlugExists(t *testing.T) {
 func TestUniqueSlugConstraint(t *testing.T) {
 	database := openTestDB(t)
 
-	if _, err := database.InsertDocument("dup", "a.pdf", "/a.pdf"); err != nil {
+	if _, err := database.InsertDocument("dup", "a.pdf", "/a.pdf", "", 0); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 	// Inserting the same slug should fail.
-	if _, err := database.InsertDocument("dup", "b.pdf", "/b.pdf"); err == nil {
+	if _, err := database.InsertDocument("dup", "b.pdf", "/b.pdf", "", 0); err == nil {
 		t.Error("expected error on duplicate slug, got nil")
 	}
 }
 
-// ---- Admin tests ----
+func TestDocumentFields(t *testing.T) {
+	database := openTestDB(t)
+
+	id, err := database.InsertDocument("doc-with-meta", "Meta.pdf", "/uploads/meta.pdf", "alice", 12345)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if id <= 0 {
+		t.Errorf("expected positive id, got %d", id)
+	}
+
+	doc, err := database.GetBySlug("doc-with-meta")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if doc == nil {
+		t.Fatal("expected doc, got nil")
+	}
+	if doc.UploadedBy != "alice" {
+		t.Errorf("UploadedBy: got %q, want %q", doc.UploadedBy, "alice")
+	}
+	if doc.Size != 12345 {
+		t.Errorf("Size: got %d, want 12345", doc.Size)
+	}
+	if doc.UploadedAt.IsZero() {
+		t.Error("expected non-zero UploadedAt")
+	}
+}
+
+func TestCountDocuments(t *testing.T) {
+	database := openTestDB(t)
+
+	n, err := database.CountDocuments()
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0, got %d", n)
+	}
+
+	for i := 0; i < 3; i++ {
+		slug := "doc-count-" + string(rune('a'+i))
+		if _, err := database.InsertDocument(slug, slug+".pdf", "/"+slug, "", 0); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	n, err = database.CountDocuments()
+	if err != nil {
+		t.Fatalf("count after inserts: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("expected 3, got %d", n)
+	}
+}
+
+func TestListDocuments_Pagination(t *testing.T) {
+	database := openTestDB(t)
+
+	for i := 0; i < 5; i++ {
+		slug := "page-doc-" + string(rune('a'+i))
+		if _, err := database.InsertDocument(slug, slug+".pdf", "/"+slug, "admin", int64(i*100)); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+
+	// Page 1 with size 3 should return 3 docs.
+	docs, err := database.ListDocuments(1, 3)
+	if err != nil {
+		t.Fatalf("list page 1: %v", err)
+	}
+	if len(docs) != 3 {
+		t.Errorf("page 1: expected 3 docs, got %d", len(docs))
+	}
+
+	// Page 2 with size 3 should return 2 docs.
+	docs, err = database.ListDocuments(2, 3)
+	if err != nil {
+		t.Fatalf("list page 2: %v", err)
+	}
+	if len(docs) != 2 {
+		t.Errorf("page 2: expected 2 docs, got %d", len(docs))
+	}
+}
+
+func TestDeleteDocuments(t *testing.T) {
+	database := openTestDB(t)
+
+	id1, err := database.InsertDocument("del-a", "a.pdf", "/tmp/del-a.pdf", "", 0)
+	if err != nil {
+		t.Fatalf("insert a: %v", err)
+	}
+	id2, err := database.InsertDocument("del-b", "b.pdf", "/tmp/del-b.pdf", "", 0)
+	if err != nil {
+		t.Fatalf("insert b: %v", err)
+	}
+
+	paths, err := database.DeleteDocuments([]int64{id1, id2})
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Errorf("expected 2 paths, got %d", len(paths))
+	}
+
+	n, err := database.CountDocuments()
+	if err != nil {
+		t.Fatalf("count after delete: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 docs after deletion, got %d", n)
+	}
+}
+
+func TestDeleteDocuments_Empty(t *testing.T) {
+	database := openTestDB(t)
+	paths, err := database.DeleteDocuments(nil)
+	if err != nil {
+		t.Fatalf("delete empty: %v", err)
+	}
+	if paths != nil {
+		t.Errorf("expected nil paths, got %v", paths)
+	}
+}
+
+func TestDocument_FmtSize(t *testing.T) {
+	tests := []struct {
+		size int64
+		want string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1024, "1.0 KB"},
+		{1024 * 1024, "1.0 MB"},
+		{1024 * 1024 * 1024, "1.0 GB"},
+		{1536, "1.5 KB"},
+	}
+	for _, tc := range tests {
+		doc := db.Document{Size: tc.size}
+		got := doc.FmtSize()
+		if got != tc.want {
+			t.Errorf("FmtSize(%d) = %q, want %q", tc.size, got, tc.want)
+		}
+	}
+}
+
 
 func TestDefaultAdminSeeded(t *testing.T) {
 	database := openTestDB(t)
