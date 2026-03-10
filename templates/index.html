@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PostDoc – Share a Document</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f5f5f5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+      color: #333;
+    }
+    header { text-align: center; margin-bottom: 2rem; }
+    header h1 { font-size: 2.5rem; color: #1a73e8; }
+    header p  { color: #666; margin-top: 0.4rem; }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.1);
+      padding: 2rem;
+      width: 100%;
+      max-width: 480px;
+    }
+    label { display: block; font-weight: 600; margin-bottom: 0.5rem; }
+    .drop-zone {
+      border: 2px dashed #1a73e8;
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .drop-zone:hover, .drop-zone.over { background: #e8f0fe; }
+    .drop-zone input[type=file] { display: none; }
+    .drop-zone svg { width: 48px; height: 48px; stroke: #1a73e8; fill: none; }
+    .drop-zone p { color: #555; margin-top: 0.6rem; }
+    .drop-zone .file-name { font-size: 0.9rem; color: #1a73e8; margin-top: 0.4rem; font-weight: 600; }
+    button[type=submit] {
+      width: 100%;
+      margin-top: 1.2rem;
+      padding: 0.8rem;
+      background: #1a73e8;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    button[type=submit]:hover { background: #1558b0; }
+    .note { font-size: 0.8rem; color: #999; margin-top: 0.8rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PostDoc</h1>
+    <p>Upload a PDF and get a short shareable link.</p>
+  </header>
+
+  <div class="card">
+    <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+      <label for="document">Select a PDF</label>
+      <div class="drop-zone" id="drop-zone">
+        <svg viewBox="0 0 24 24" stroke-width="1.5" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round"
+            d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"/>
+        </svg>
+        <p>Click to browse or drag &amp; drop a PDF here</p>
+        <p class="file-name" id="file-name"></p>
+        <input type="file" id="document" name="document" accept=".pdf,application/pdf" required>
+      </div>
+      <button type="submit">Upload &amp; Get Link</button>
+      <p class="note">Only PDF files are accepted. Max size: 32 MB.</p>
+    </form>
+  </div>
+
+  <script>
+    const zone = document.getElementById('drop-zone');
+    const input = document.getElementById('document');
+    const nameEl = document.getElementById('file-name');
+
+    zone.addEventListener('click', () => input.click());
+
+    input.addEventListener('change', () => {
+      if (input.files.length) nameEl.textContent = input.files[0].name;
+    });
+
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('over');
+      const dt = new DataTransfer();
+      dt.items.add(e.dataTransfer.files[0]);
+      input.files = dt.files;
+      nameEl.textContent = input.files[0].name;
+    });
+  </script>
+</body>
+</html>
