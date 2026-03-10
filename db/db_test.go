@@ -227,3 +227,32 @@ func TestChangePassword(t *testing.T) {
 		t.Fatal("expected admin with new password")
 	}
 }
+
+func TestSQLitePragmas(t *testing.T) {
+	database := openTestDB(t)
+
+	tests := []struct {
+		pragma string
+		want   string
+	}{
+		{"journal_mode", "wal"},
+		{"foreign_keys", "1"},
+	}
+	for _, tc := range tests {
+		val, err := database.QueryPragma(tc.pragma)
+		if err != nil {
+			t.Fatalf("QueryPragma(%q): %v", tc.pragma, err)
+		}
+		if val != tc.want {
+			t.Errorf("PRAGMA %s = %q, want %q", tc.pragma, val, tc.want)
+		}
+	}
+}
+
+func TestQueryPragma_InvalidName(t *testing.T) {
+	database := openTestDB(t)
+	_, err := database.QueryPragma("bad; DROP TABLE admins--")
+	if err == nil {
+		t.Error("expected error for invalid pragma name, got nil")
+	}
+}

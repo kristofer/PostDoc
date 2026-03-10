@@ -3,10 +3,14 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// pragmaNameRe matches valid SQLite PRAGMA identifiers (letters, digits, underscores).
+var pragmaNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Document represents a stored document record.
 type Document struct {
@@ -35,6 +39,10 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
+	if err := configure(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("configure db: %w", err)
+	}
 	if err := migrate(conn); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("migrate db: %w", err)
@@ -50,6 +58,46 @@ func Open(path string) (*DB, error) {
 // Close closes the database connection.
 func (d *DB) Close() error {
 	return d.conn.Close()
+}
+
+// QueryPragma returns the string value of the named SQLite PRAGMA.
+// It is intended for use in tests. The pragma name must consist only of
+// letters, digits, and underscores; an error is returned otherwise.
+func (d *DB) QueryPragma(name string) (string, error) {
+	if !pragmaNameRe.MatchString(name) {
+		return "", fmt.Errorf("invalid pragma name: %q", name)
+	}
+	var value string
+	err := d.conn.QueryRow("PRAGMA " + name).Scan(&value)
+	return value, err
+}
+
+// configure applies SQLite PRAGMAs that enable WAL mode and improve
+// concurrency and performance. It must be called immediately after opening
+// the connection, before any schema migrations run.
+func configure(conn *sql.DB) error {
+	pragmas := []string{
+		// Use Write-Ahead Logging for better concurrent read/write performance.
+		`PRAGMA journal_mode=WAL`,
+		// NORMAL is safe with WAL and faster than FULL.
+		`PRAGMA synchronous=NORMAL`,
+		// 64 MiB page cache (negative value = kibibytes).
+		`PRAGMA cache_size=-65536`,
+		// Enforce foreign-key constraints.
+		`PRAGMA foreign_keys=ON`,
+		// Wait up to 5 seconds when the database is locked before returning SQLITE_BUSY.
+		`PRAGMA busy_timeout=5000`,
+		// Keep temporary tables and indices in memory.
+		`PRAGMA temp_store=MEMORY`,
+		// Allow WAL to be shared across multiple reader connections.
+		`PRAGMA wal_autocheckpoint=1000`,
+	}
+	for _, p := range pragmas {
+		if _, err := conn.Exec(p); err != nil {
+			return fmt.Errorf("%s: %w", p, err)
+		}
+	}
+	return nil
 }
 
 func migrate(conn *sql.DB) error {

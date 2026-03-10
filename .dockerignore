@@ -1,0 +1,23 @@
+# Git-tracked source files only; exclude everything that isn't needed to
+# build the Docker image.  Keeping the build context small speeds up builds.
+
+.git
+.gitignore
+*.md
+*.out
+*.test
+coverage.*
+
+# Runtime artefacts that must not be baked into the image.
+postdoc
+postdoc.db
+postdoc.db-shm
+postdoc.db-wal
+uploads/
+
+# Local environment overrides.
+.env
+
+# Editor / IDE directories.
+.idea/
+.vscode/
