@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/kristofer/postdoc/auth"
 	"github.com/kristofer/postdoc/db"
 )
 
@@ -108,7 +109,12 @@ func UploadHandler(database *db.DB, uploadDir string, tmpl *template.Template, b
 		}
 
 		// Persist metadata in the DB.
-		if _, err := database.InsertDocument(slug, header.Filename, destPath); err != nil {
+		uploadedBy, _ := auth.UsernameFromRequest(r)
+		var fileSize int64
+		if info, err := os.Stat(destPath); err == nil {
+			fileSize = info.Size()
+		}
+		if _, err := database.InsertDocument(slug, header.Filename, destPath, uploadedBy, fileSize); err != nil {
 			log.Printf("db insert error: %v", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return

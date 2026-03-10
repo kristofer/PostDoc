@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
+	"strings"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
@@ -14,10 +16,40 @@ var pragmaNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Document represents a stored document record.
 type Document struct {
-	ID       int64
-	Slug     string
-	Filename string
-	Path     string
+	ID         int64
+	Slug       string
+	Filename   string
+	Path       string
+	UploadedBy string
+	UploadedAt time.Time
+	Size       int64
+}
+
+// FmtSize returns the document file size in a human-readable format.
+func (d Document) FmtSize() string {
+	const (
+		kb = 1024
+		mb = 1024 * kb
+		gb = 1024 * mb
+	)
+	switch {
+	case d.Size >= gb:
+		return fmt.Sprintf("%.1f GB", float64(d.Size)/gb)
+	case d.Size >= mb:
+		return fmt.Sprintf("%.1f MB", float64(d.Size)/mb)
+	case d.Size >= kb:
+		return fmt.Sprintf("%.1f KB", float64(d.Size)/kb)
+	default:
+		return fmt.Sprintf("%d B", d.Size)
+	}
+}
+
+// FmtUploadedAt returns the upload timestamp formatted for display.
+func (d Document) FmtUploadedAt() string {
+	if d.UploadedAt.IsZero() {
+		return "—"
+	}
+	return d.UploadedAt.UTC().Format("2006-01-02 15:04 UTC")
 }
 
 // Admin represents an admin user record.
@@ -103,10 +135,13 @@ func configure(conn *sql.DB) error {
 func migrate(conn *sql.DB) error {
 	_, err := conn.Exec(`
 		CREATE TABLE IF NOT EXISTS documents (
-			id       INTEGER PRIMARY KEY AUTOINCREMENT,
-			slug     TEXT    NOT NULL UNIQUE,
-			filename TEXT    NOT NULL,
-			path     TEXT    NOT NULL
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			slug        TEXT    NOT NULL UNIQUE,
+			filename    TEXT    NOT NULL,
+			path        TEXT    NOT NULL,
+			uploaded_by TEXT    NOT NULL DEFAULT '',
+			uploaded_at TEXT    NOT NULL DEFAULT '',
+			size        INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE TABLE IF NOT EXISTS admins (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,7 +149,26 @@ func migrate(conn *sql.DB) error {
 			password_hash TEXT    NOT NULL
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Add new columns to databases created before these fields existed.
+	for _, stmt := range []string{
+		`ALTER TABLE documents ADD COLUMN uploaded_by TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE documents ADD COLUMN uploaded_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE documents ADD COLUMN size INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := conn.Exec(stmt); err != nil && !isDuplicateColumn(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// isDuplicateColumn reports whether the SQLite error is "duplicate column name",
+// which occurs when ALTER TABLE ADD COLUMN is run on a column that already exists.
+func isDuplicateColumn(err error) bool {
+	return strings.Contains(err.Error(), "duplicate column name")
 }
 
 // seedDefaultAdmin creates the default "admin"/"foobar" account if no admins exist.
@@ -138,10 +192,11 @@ func (d *DB) seedDefaultAdmin() error {
 }
 
 // InsertDocument inserts a new document record and returns its assigned id.
-func (d *DB) InsertDocument(slug, filename, path string) (int64, error) {
+func (d *DB) InsertDocument(slug, filename, path, uploadedBy string, size int64) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := d.conn.Exec(
-		`INSERT INTO documents (slug, filename, path) VALUES (?, ?, ?)`,
-		slug, filename, path,
+		`INSERT INTO documents (slug, filename, path, uploaded_by, uploaded_at, size) VALUES (?, ?, ?, ?, ?, ?)`,
+		slug, filename, path, uploadedBy, now, size,
 	)
 	if err != nil {
 		return 0, err
@@ -152,16 +207,20 @@ func (d *DB) InsertDocument(slug, filename, path string) (int64, error) {
 // GetBySlug fetches the document with the given slug, or returns nil if not found.
 func (d *DB) GetBySlug(slug string) (*Document, error) {
 	row := d.conn.QueryRow(
-		`SELECT id, slug, filename, path FROM documents WHERE slug = ?`,
+		`SELECT id, slug, filename, path, uploaded_by, uploaded_at, size FROM documents WHERE slug = ?`,
 		slug,
 	)
 	doc := &Document{}
-	err := row.Scan(&doc.ID, &doc.Slug, &doc.Filename, &doc.Path)
+	var uploadedAt string
+	err := row.Scan(&doc.ID, &doc.Slug, &doc.Filename, &doc.Path, &doc.UploadedBy, &uploadedAt, &doc.Size)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if uploadedAt != "" {
+		doc.UploadedAt, _ = time.Parse(time.RFC3339, uploadedAt)
 	}
 	return doc, nil
 }
@@ -173,6 +232,89 @@ func (d *DB) SlugExists(slug string) (bool, error) {
 		`SELECT COUNT(*) FROM documents WHERE slug = ?`, slug,
 	).Scan(&n)
 	return n > 0, err
+}
+
+// CountDocuments returns the total number of documents in the database.
+func (d *DB) CountDocuments() (int, error) {
+	var n int
+	err := d.conn.QueryRow(`SELECT COUNT(*) FROM documents`).Scan(&n)
+	return n, err
+}
+
+// ListDocuments returns a page of documents ordered by most recently uploaded.
+func (d *DB) ListDocuments(page, pageSize int) ([]Document, error) {
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * pageSize
+	rows, err := d.conn.Query(
+		`SELECT id, slug, filename, path, uploaded_by, uploaded_at, size FROM documents ORDER BY id DESC LIMIT ? OFFSET ?`,
+		pageSize, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var docs []Document
+	for rows.Next() {
+		var doc Document
+		var uploadedAt string
+		if err := rows.Scan(&doc.ID, &doc.Slug, &doc.Filename, &doc.Path, &doc.UploadedBy, &uploadedAt, &doc.Size); err != nil {
+			return nil, err
+		}
+		if uploadedAt != "" {
+			doc.UploadedAt, _ = time.Parse(time.RFC3339, uploadedAt)
+		}
+		docs = append(docs, doc)
+	}
+	return docs, rows.Err()
+}
+
+// DeleteDocuments removes the documents with the given ids and returns the
+// on-disk file paths that were associated with them so the caller can clean
+// up the files.
+func (d *DB) DeleteDocuments(ids []int64) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// Collect file paths before deleting.
+	rows, err := d.conn.Query(
+		`SELECT path FROM documents WHERE id IN (`+inClause+`)`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	_, err = d.conn.Exec(
+		`DELETE FROM documents WHERE id IN (`+inClause+`)`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return paths, nil
 }
 
 // ---- Admin methods ----

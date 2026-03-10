@@ -138,7 +138,7 @@ func TestServeDocument_Found(t *testing.T) {
 	}
 
 	// Insert a record into the DB.
-	if _, err := database.InsertDocument("hello-world", "Hello World.pdf", pdfPath); err != nil {
+	if _, err := database.InsertDocument("hello-world", "Hello World.pdf", pdfPath, "", 0); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 

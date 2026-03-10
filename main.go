@@ -88,6 +88,10 @@ func main() {
 	mux.Handle("POST /admin/delete", auth.Middleware(handlers.DeleteAdminHandler(database, tmpl)))
 	mux.Handle("POST /admin/change-password", auth.Middleware(handlers.ChangePasswordHandler(database, tmpl)))
 
+	// Protected: document tracking.
+	mux.Handle("GET /documents", auth.Middleware(handlers.DocumentsHandler(database, tmpl, base)))
+	mux.Handle("POST /documents/delete", auth.Middleware(handlers.DeleteDocumentsHandler(database, tmpl, base)))
+
 	// Public: short-link document serving.
 	mux.Handle("GET /{slug}", handlers.ServeDocument(database))
 
