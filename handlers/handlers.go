@@ -29,7 +29,11 @@ func slugify(name string) string {
 }
 
 // uniqueSlug returns a slug derived from base that does not yet exist in the DB.
+// If base contains a file extension (e.g. ".pdf"), collision counters are
+// inserted before the extension: "report.pdf" → "report-1.pdf", etc.
 func uniqueSlug(database *db.DB, base string) (string, error) {
+	ext := filepath.Ext(base)
+	nameWithoutExt := strings.TrimSuffix(base, ext)
 	candidate := base
 	for i := 1; ; i++ {
 		exists, err := database.SlugExists(candidate)
@@ -39,7 +43,7 @@ func uniqueSlug(database *db.DB, base string) (string, error) {
 		if !exists {
 			return candidate, nil
 		}
-		candidate = fmt.Sprintf("%s-%d", base, i)
+		candidate = fmt.Sprintf("%s-%d%s", nameWithoutExt, i, ext)
 	}
 }
 
@@ -72,17 +76,17 @@ func UploadHandler(database *db.DB, uploadDir string, tmpl *template.Template, b
 			return
 		}
 
-		// Build slug from the original filename (without extension).
+		// Build slug from the original filename, preserving the .pdf extension.
 		baseName := strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename))
-		slug, err := uniqueSlug(database, slugify(baseName))
+		slug, err := uniqueSlug(database, slugify(baseName)+".pdf")
 		if err != nil {
 			log.Printf("slug generation error: %v", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		// Store the file on disk.
-		destPath := filepath.Join(uploadDir, slug+".pdf")
+		// Store the file on disk using the slug directly (which already includes .pdf).
+		destPath := filepath.Join(uploadDir, slug)
 		dest, err := os.Create(destPath)
 		if err != nil {
 			log.Printf("create file error: %v", err)
