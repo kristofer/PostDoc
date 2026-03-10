@@ -115,9 +115,18 @@ func TestUploadHandler_MissingField(t *testing.T) {
 	}
 }
 
+func makeServeTemplate(t *testing.T) *template.Template {
+	t.Helper()
+	tmpl, err := template.New("email_prompt.html").Parse(`EMAIL_PROMPT:{{.Slug}}`)
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
+	return tmpl
+}
+
 func TestServeDocument_NotFound(t *testing.T) {
 	database, _ := setupDB(t)
-	h := handlers.ServeDocument(database)
+	h := handlers.ServeDocument(database, makeServeTemplate(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/no-such-doc", nil)
 	rr := httptest.NewRecorder()
@@ -137,12 +146,12 @@ func TestServeDocument_Found(t *testing.T) {
 		t.Fatalf("write pdf: %v", err)
 	}
 
-	// Insert a record into the DB.
-	if _, err := database.InsertDocument("hello-world", "Hello World.pdf", pdfPath, "", 0); err != nil {
+	// Insert a record into the DB (tracking disabled, so PDF served directly).
+	if _, err := database.InsertDocument("hello-world", "Hello World.pdf", pdfPath, "", 0, false); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 
-	h := handlers.ServeDocument(database)
+	h := handlers.ServeDocument(database, makeServeTemplate(t))
 	req := httptest.NewRequest(http.MethodGet, "/hello-world", nil)
 	rr := httptest.NewRecorder()
 	h(rr, req)
@@ -185,5 +194,194 @@ func TestSlugCollisionDeduplication(t *testing.T) {
 	doc2, err := database.GetBySlug("report-1.pdf")
 	if err != nil || doc2 == nil {
 		t.Fatal("expected slug 'report-1.pdf' to exist")
+	}
+}
+
+func uploadRequestWithTracking(t *testing.T, filename string, content []byte, trackDownloads bool) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, err := w.CreateFormFile("document", filename)
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		t.Fatalf("write content: %v", err)
+	}
+	if trackDownloads {
+		if err := w.WriteField("track_downloads", "on"); err != nil {
+			t.Fatalf("write field: %v", err)
+		}
+	}
+	w.Close()
+	req := httptest.NewRequest(http.MethodPost, "/upload", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	return req
+}
+
+func TestUploadHandler_TrackDownloads(t *testing.T) {
+	database, dir := setupDB(t)
+	tmpl := makeTemplate(t)
+
+	h := handlers.UploadHandler(database, dir, tmpl, "http://localhost:8080")
+	req := uploadRequestWithTracking(t, "tracked.pdf", minimalPDF, true)
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	doc, err := database.GetBySlug("tracked.pdf")
+	if err != nil || doc == nil {
+		t.Fatal("expected slug 'tracked.pdf' to exist")
+	}
+	if !doc.TrackDownloads {
+		t.Error("expected TrackDownloads to be true")
+	}
+}
+
+func TestServeDocument_TrackingShowsEmailForm(t *testing.T) {
+	database, dir := setupDB(t)
+
+	pdfPath := filepath.Join(dir, "secret.pdf")
+	if err := os.WriteFile(pdfPath, minimalPDF, 0o640); err != nil {
+		t.Fatalf("write pdf: %v", err)
+	}
+
+	// Insert a tracking-enabled document.
+	if _, err := database.InsertDocument("secret.pdf", "Secret.pdf", pdfPath, "", 0, true); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	emailTmpl, err := template.New("email_prompt.html").Parse(`EMAIL_PROMPT:{{.Slug}}`)
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
+
+	h := handlers.ServeDocument(database, emailTmpl)
+	req := httptest.NewRequest(http.MethodGet, "/secret.pdf", nil)
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "EMAIL_PROMPT:secret.pdf") {
+		t.Errorf("expected email prompt in body, got: %s", body)
+	}
+}
+
+func TestServeDocumentPost_ValidEmail(t *testing.T) {
+	database, dir := setupDB(t)
+
+	pdfPath := filepath.Join(dir, "tracked.pdf")
+	if err := os.WriteFile(pdfPath, minimalPDF, 0o640); err != nil {
+		t.Fatalf("write pdf: %v", err)
+	}
+
+	docID, err := database.InsertDocument("tracked.pdf", "Tracked.pdf", pdfPath, "", 0, true)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	emailTmpl, err := template.New("email_prompt.html").Parse(`EMAIL_PROMPT`)
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
+
+	h := handlers.ServeDocumentPost(database, emailTmpl)
+	form := strings.NewReader("email=user%40example.com")
+	req := httptest.NewRequest(http.MethodPost, "/tracked.pdf", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	ct := rr.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/pdf") {
+		t.Errorf("expected application/pdf, got %s", ct)
+	}
+
+	// Confirm download event was recorded.
+	events, err := database.ListDownloadEvents(docID)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Email != "user@example.com" {
+		t.Errorf("expected email 'user@example.com', got %q", events[0].Email)
+	}
+}
+
+func TestServeDocumentPost_InvalidEmail(t *testing.T) {
+	database, dir := setupDB(t)
+
+	pdfPath := filepath.Join(dir, "tracked2.pdf")
+	if err := os.WriteFile(pdfPath, minimalPDF, 0o640); err != nil {
+		t.Fatalf("write pdf: %v", err)
+	}
+	if _, err := database.InsertDocument("tracked2.pdf", "Tracked2.pdf", pdfPath, "", 0, true); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	emailTmpl, err := template.New("email_prompt.html").Parse(`ERROR:{{.Error}}`)
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
+
+	h := handlers.ServeDocumentPost(database, emailTmpl)
+	form := strings.NewReader("email=not-an-email")
+	req := httptest.NewRequest(http.MethodPost, "/tracked2.pdf", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (re-render), got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "ERROR:") {
+		t.Errorf("expected error message in body, got: %s", body)
+	}
+	ct := rr.Header().Get("Content-Type")
+	if strings.HasPrefix(ct, "application/pdf") {
+		t.Error("should not serve PDF for invalid email")
+	}
+}
+
+func TestServeDocumentPost_NoTracking_Redirects(t *testing.T) {
+	database, dir := setupDB(t)
+
+	pdfPath := filepath.Join(dir, "notrack.pdf")
+	if err := os.WriteFile(pdfPath, minimalPDF, 0o640); err != nil {
+		t.Fatalf("write pdf: %v", err)
+	}
+	if _, err := database.InsertDocument("notrack.pdf", "NoTrack.pdf", pdfPath, "", 0, false); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	emailTmpl, err := template.New("email_prompt.html").Parse(`EMAIL_PROMPT`)
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
+
+	h := handlers.ServeDocumentPost(database, emailTmpl)
+	form := strings.NewReader("email=user%40example.com")
+	req := httptest.NewRequest(http.MethodPost, "/notrack.pdf", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/notrack.pdf" {
+		t.Errorf("expected redirect to /notrack.pdf, got %q", loc)
 	}
 }

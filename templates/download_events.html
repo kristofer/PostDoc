@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PostDoc – Download History</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f5f5f5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+      color: #333;
+    }
+    header { text-align: center; margin-bottom: 2rem; }
+    header h1 { font-size: 2.5rem; color: #1a73e8; }
+    header p  { color: #666; margin-top: 0.4rem; }
+    nav {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+    }
+    nav a {
+      color: #1a73e8;
+      text-decoration: none;
+    }
+    nav a:hover { text-decoration: underline; }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.1);
+      padding: 2rem;
+      width: 100%;
+      max-width: 760px;
+      margin-bottom: 1.5rem;
+    }
+    .card-header {
+      margin-bottom: 1.2rem;
+    }
+    .card-header h2 { font-size: 1.2rem; color: #333; }
+    .card-header .meta { font-size: 0.9rem; color: #666; margin-top: 0.3rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th { text-align: left; padding: 0.5rem 0.6rem; color: #666; font-weight: 600; border-bottom: 2px solid #eee; white-space: nowrap; }
+    td { padding: 0.6rem 0.6rem; border-bottom: 1px solid #eee; word-break: break-all; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafafa; }
+    .empty { text-align: center; color: #999; padding: 2rem 0; font-size: 0.95rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PostDoc</h1>
+    <p>Download History</p>
+  </header>
+
+  <nav>
+    <a href="/documents">← Documents</a>
+    <a href="/">⬆ Upload</a>
+    <a href="/logout">Sign out ({{.Username}})</a>
+  </nav>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>{{.Document.Filename}}</h2>
+      <p class="meta">{{len .Events}} download{{if ne (len .Events) 1}}s{{end}} recorded</p>
+    </div>
+
+    {{if .Events}}
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Email Address</th>
+          <th>Downloaded At</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range $i, $e := .Events}}
+        <tr>
+          <td>{{inc $i}}</td>
+          <td>{{$e.Email}}</td>
+          <td>{{$e.FmtDownloadedAt}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="empty">No downloads recorded yet.</p>
+    {{end}}
+  </div>
+</body>
+</html>

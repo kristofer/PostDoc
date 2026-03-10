@@ -19,7 +19,7 @@ func openTestDB(t *testing.T) *db.DB {
 func TestInsertAndGetBySlug(t *testing.T) {
 	database := openTestDB(t)
 
-	id, err := database.InsertDocument("my-doc", "My Doc.pdf", "/uploads/my-doc.pdf", "admin", 0)
+	id, err := database.InsertDocument("my-doc", "My Doc.pdf", "/uploads/my-doc.pdf", "admin", 0, false)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestSlugExists(t *testing.T) {
 		t.Error("expected false before insert")
 	}
 
-	if _, err := database.InsertDocument("x", "x.pdf", "/tmp/x.pdf", "", 0); err != nil {
+	if _, err := database.InsertDocument("x", "x.pdf", "/tmp/x.pdf", "", 0, false); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 
@@ -76,11 +76,11 @@ func TestSlugExists(t *testing.T) {
 func TestUniqueSlugConstraint(t *testing.T) {
 	database := openTestDB(t)
 
-	if _, err := database.InsertDocument("dup", "a.pdf", "/a.pdf", "", 0); err != nil {
+	if _, err := database.InsertDocument("dup", "a.pdf", "/a.pdf", "", 0, false); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 	// Inserting the same slug should fail.
-	if _, err := database.InsertDocument("dup", "b.pdf", "/b.pdf", "", 0); err == nil {
+	if _, err := database.InsertDocument("dup", "b.pdf", "/b.pdf", "", 0, false); err == nil {
 		t.Error("expected error on duplicate slug, got nil")
 	}
 }
@@ -88,7 +88,7 @@ func TestUniqueSlugConstraint(t *testing.T) {
 func TestDocumentFields(t *testing.T) {
 	database := openTestDB(t)
 
-	id, err := database.InsertDocument("doc-with-meta", "Meta.pdf", "/uploads/meta.pdf", "alice", 12345)
+	id, err := database.InsertDocument("doc-with-meta", "Meta.pdf", "/uploads/meta.pdf", "alice", 12345, false)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestCountDocuments(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		slug := "doc-count-" + string(rune('a'+i))
-		if _, err := database.InsertDocument(slug, slug+".pdf", "/"+slug, "", 0); err != nil {
+		if _, err := database.InsertDocument(slug, slug+".pdf", "/"+slug, "", 0, false); err != nil {
 			t.Fatalf("insert: %v", err)
 		}
 	}
@@ -146,7 +146,7 @@ func TestListDocuments_Pagination(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		slug := "page-doc-" + string(rune('a'+i))
-		if _, err := database.InsertDocument(slug, slug+".pdf", "/"+slug, "admin", int64(i*100)); err != nil {
+		if _, err := database.InsertDocument(slug, slug+".pdf", "/"+slug, "admin", int64(i*100), false); err != nil {
 			t.Fatalf("insert %d: %v", i, err)
 		}
 	}
@@ -173,11 +173,11 @@ func TestListDocuments_Pagination(t *testing.T) {
 func TestDeleteDocuments(t *testing.T) {
 	database := openTestDB(t)
 
-	id1, err := database.InsertDocument("del-a", "a.pdf", "/tmp/del-a.pdf", "", 0)
+	id1, err := database.InsertDocument("del-a", "a.pdf", "/tmp/del-a.pdf", "", 0, false)
 	if err != nil {
 		t.Fatalf("insert a: %v", err)
 	}
-	id2, err := database.InsertDocument("del-b", "b.pdf", "/tmp/del-b.pdf", "", 0)
+	id2, err := database.InsertDocument("del-b", "b.pdf", "/tmp/del-b.pdf", "", 0, false)
 	if err != nil {
 		t.Fatalf("insert b: %v", err)
 	}
@@ -228,6 +228,157 @@ func TestDocument_FmtSize(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("FmtSize(%d) = %q, want %q", tc.size, got, tc.want)
 		}
+	}
+}
+
+func TestInsertDocument_TrackDownloads(t *testing.T) {
+	database := openTestDB(t)
+
+	// Insert a document with tracking enabled.
+	id, err := database.InsertDocument("track-doc", "Track.pdf", "/tmp/track.pdf", "admin", 100, true)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if id <= 0 {
+		t.Errorf("expected positive id, got %d", id)
+	}
+
+	doc, err := database.GetBySlug("track-doc")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if doc == nil {
+		t.Fatal("expected doc, got nil")
+	}
+	if !doc.TrackDownloads {
+		t.Error("expected TrackDownloads to be true")
+	}
+}
+
+func TestInsertDownloadEvent_AndList(t *testing.T) {
+	database := openTestDB(t)
+
+	id, err := database.InsertDocument("dl-doc", "Download.pdf", "/tmp/dl.pdf", "admin", 50, true)
+	if err != nil {
+		t.Fatalf("insert doc: %v", err)
+	}
+
+	if err := database.InsertDownloadEvent(id, "alice@example.com"); err != nil {
+		t.Fatalf("insert event 1: %v", err)
+	}
+	if err := database.InsertDownloadEvent(id, "bob@example.com"); err != nil {
+		t.Fatalf("insert event 2: %v", err)
+	}
+
+	events, err := database.ListDownloadEvents(id)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	// Events are ordered by most recent first.
+	if events[0].Email != "bob@example.com" {
+		t.Errorf("expected bob first (most recent), got %q", events[0].Email)
+	}
+	if events[0].DocumentID != id {
+		t.Errorf("expected document_id %d, got %d", id, events[0].DocumentID)
+	}
+	if events[0].DownloadedAt.IsZero() {
+		t.Error("expected non-zero DownloadedAt")
+	}
+}
+
+func TestListDocuments_DownloadCount(t *testing.T) {
+	database := openTestDB(t)
+
+	id, err := database.InsertDocument("count-doc", "Count.pdf", "/tmp/count.pdf", "admin", 0, true)
+	if err != nil {
+		t.Fatalf("insert doc: %v", err)
+	}
+
+	// No events yet.
+	docs, err := database.ListDocuments(1, 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc, got %d", len(docs))
+	}
+	if docs[0].DownloadCount != 0 {
+		t.Errorf("expected DownloadCount 0, got %d", docs[0].DownloadCount)
+	}
+
+	// Add two events.
+	if err := database.InsertDownloadEvent(id, "x@x.com"); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	if err := database.InsertDownloadEvent(id, "y@y.com"); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	docs, err = database.ListDocuments(1, 10)
+	if err != nil {
+		t.Fatalf("list after events: %v", err)
+	}
+	if docs[0].DownloadCount != 2 {
+		t.Errorf("expected DownloadCount 2, got %d", docs[0].DownloadCount)
+	}
+}
+
+func TestGetDocumentByID(t *testing.T) {
+	database := openTestDB(t)
+
+	id, err := database.InsertDocument("byid-doc", "ByID.pdf", "/tmp/byid.pdf", "admin", 0, false)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	doc, err := database.GetDocumentByID(id)
+	if err != nil {
+		t.Fatalf("get by id: %v", err)
+	}
+	if doc == nil {
+		t.Fatal("expected doc, got nil")
+	}
+	if doc.Slug != "byid-doc" {
+		t.Errorf("expected slug 'byid-doc', got %q", doc.Slug)
+	}
+}
+
+func TestGetDocumentByID_NotFound(t *testing.T) {
+	database := openTestDB(t)
+	doc, err := database.GetDocumentByID(99999)
+	if err != nil {
+		t.Fatalf("get by id: %v", err)
+	}
+	if doc != nil {
+		t.Error("expected nil for non-existent id")
+	}
+}
+
+func TestDownloadEvents_CascadeDelete(t *testing.T) {
+	database := openTestDB(t)
+
+	id, err := database.InsertDocument("cascade-doc", "Cascade.pdf", "/tmp/c.pdf", "admin", 0, true)
+	if err != nil {
+		t.Fatalf("insert doc: %v", err)
+	}
+	if err := database.InsertDownloadEvent(id, "a@b.com"); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	// Deleting the document should cascade-delete its events.
+	if _, err := database.DeleteDocuments([]int64{id}); err != nil {
+		t.Fatalf("delete doc: %v", err)
+	}
+
+	events, err := database.ListDownloadEvents(id)
+	if err != nil {
+		t.Fatalf("list events after delete: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected 0 events after cascade delete, got %d", len(events))
 	}
 }
 

@@ -172,6 +172,7 @@
             <th>Uploaded At</th>
             <th>Size</th>
             <th>URL</th>
+            <th>Downloads</th>
           </tr>
         </thead>
         <tbody>
@@ -183,6 +184,17 @@
             <td>{{.FmtUploadedAt}}</td>
             <td>{{.FmtSize}}</td>
             <td class="url-cell"><a href="{{$.BaseURL}}/{{.Slug}}" target="_blank">{{$.BaseURL}}/{{.Slug}}</a></td>
+            <td class="url-cell">
+              {{if .TrackDownloads}}
+                {{if gt .DownloadCount 0}}
+                  <a href="/documents/{{.ID}}/downloads">{{.DownloadCount}} download{{if ne .DownloadCount 1}}s{{end}}</a>
+                {{else}}
+                  <span style="color:#999">0</span>
+                {{end}}
+              {{else}}
+                <span style="color:#999">—</span>
+              {{end}}
+            </td>
           </tr>
           {{end}}
         </tbody>

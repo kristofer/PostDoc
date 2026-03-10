@@ -55,7 +55,9 @@ func main() {
 
 	// Load HTML templates.
 	tmplGlob := filepath.Join("templates", "*.html")
-	tmpl, err := template.ParseGlob(tmplGlob)
+	tmpl, err := template.New("").Funcs(template.FuncMap{
+		"inc": func(i int) int { return i + 1 },
+	}).ParseGlob(tmplGlob)
 	if err != nil {
 		log.Fatalf("cannot parse templates: %v", err)
 	}
@@ -91,9 +93,11 @@ func main() {
 	// Protected: document tracking.
 	mux.Handle("GET /documents", auth.Middleware(handlers.DocumentsHandler(database, tmpl, base)))
 	mux.Handle("POST /documents/delete", auth.Middleware(handlers.DeleteDocumentsHandler(database, tmpl, base)))
+	mux.Handle("GET /documents/{id}/downloads", auth.Middleware(handlers.DownloadEventsHandler(database, tmpl)))
 
 	// Public: short-link document serving.
-	mux.Handle("GET /{slug}", handlers.ServeDocument(database))
+	mux.Handle("GET /{slug}", handlers.ServeDocument(database, tmpl))
+	mux.Handle("POST /{slug}", handlers.ServeDocumentPost(database, tmpl))
 
 	log.Printf("PostDoc listening on %s (base URL: %s)", *addr, base)
 	if err := http.ListenAndServe(*addr, mux); err != nil {

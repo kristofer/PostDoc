@@ -28,6 +28,20 @@
       max-width: 480px;
     }
     label { display: block; font-weight: 600; margin-bottom: 0.5rem; }
+    .track-label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      margin-top: 1rem;
+      cursor: pointer;
+    }
+    .track-label input[type=checkbox] {
+      width: 1.1rem;
+      height: 1.1rem;
+      accent-color: #1a73e8;
+      cursor: pointer;
+    }
     .drop-zone {
       border: 2px dashed #1a73e8;
       border-radius: 8px;
@@ -86,6 +100,10 @@
         <input type="file" id="document" name="document" accept=".pdf,application/pdf" required>
       </div>
       <button type="submit">Upload &amp; Get Link</button>
+      <label class="track-label">
+        <input type="checkbox" name="track_downloads" id="track_downloads">
+        Track downloads (require email before download)
+      </label>
       <p class="note">Only PDF files are accepted. Max size: 32 MB.</p>
     </form>
   </div>
