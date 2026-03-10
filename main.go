@@ -86,6 +86,7 @@ func main() {
 	mux.Handle("GET /admin", auth.Middleware(handlers.AdminHandler(database, tmpl)))
 	mux.Handle("POST /admin/add", auth.Middleware(handlers.AddAdminHandler(database, tmpl)))
 	mux.Handle("POST /admin/delete", auth.Middleware(handlers.DeleteAdminHandler(database, tmpl)))
+	mux.Handle("POST /admin/change-password", auth.Middleware(handlers.ChangePasswordHandler(database, tmpl)))
 
 	// Public: short-link document serving.
 	mux.Handle("GET /{slug}", handlers.ServeDocument(database))

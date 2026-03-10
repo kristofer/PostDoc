@@ -199,6 +199,19 @@ func (d *DB) GetAdminByID(id int64) (*Admin, error) {
 	return a, nil
 }
 
+// ChangePassword replaces the stored password hash for the given username.
+func (d *DB) ChangePassword(username, newPassword string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = d.conn.Exec(
+		`UPDATE admins SET password_hash = ? WHERE username = ?`,
+		string(hash), username,
+	)
+	return err
+}
+
 // AuthenticateAdmin checks credentials and returns the admin on success, nil on failure.
 func (d *DB) AuthenticateAdmin(username, password string) (*Admin, error) {
 	admin, err := d.GetAdminByUsername(username)

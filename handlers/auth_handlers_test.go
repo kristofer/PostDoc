@@ -23,7 +23,7 @@ func makeAuthTemplates(t *testing.T) *template.Template {
 	t.Helper()
 	const tmplSrc = `
 {{define "login.html"}}LOGIN{{if .Error}} ERROR:{{.Error}}{{end}}{{end}}
-{{define "admin.html"}}ADMIN ADMINS:{{range .Admins}}{{.Username}},{{end}} ERROR:{{.Error}}{{end}}
+{{define "admin.html"}}ADMIN ADMINS:{{range .Admins}}{{.Username}},{{end}} ERROR:{{.Error}} PASSERR:{{.PasswordError}} PASSOK:{{.PasswordSuccess}}{{end}}
 `
 	tmpl, err := template.New("root").Parse(tmplSrc)
 	if err != nil {
@@ -258,5 +258,104 @@ func TestDeleteAdminHandler_CannotDeleteSelf(t *testing.T) {
 	// Error message expected.
 	if !strings.Contains(rr.Body.String(), "cannot delete") {
 		t.Errorf("expected self-delete error text: %s", rr.Body.String())
+	}
+}
+
+// TestChangePasswordHandler_Success changes the password and verifies login with new credentials.
+func TestChangePasswordHandler_Success(t *testing.T) {
+	database := openAuthTestDB(t)
+	tmpl := makeAuthTemplates(t)
+
+	h := handlers.ChangePasswordHandler(database, tmpl)
+	form := url.Values{
+		"current_password": {"foobar"},
+		"new_password":     {"newpass123"},
+		"confirm_password": {"newpass123"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/change-password", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie(t, "admin"))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "Password updated successfully") {
+		t.Errorf("expected success message, got: %s", rr.Body.String())
+	}
+
+	// Old password should no longer work.
+	admin, err := database.AuthenticateAdmin("admin", "foobar")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	if admin != nil {
+		t.Error("old password should not work after change")
+	}
+
+	// New password should work.
+	admin, err = database.AuthenticateAdmin("admin", "newpass123")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	if admin == nil {
+		t.Error("expected login with new password")
+	}
+}
+
+// TestChangePasswordHandler_WrongCurrentPassword shows an error for an incorrect current password.
+func TestChangePasswordHandler_WrongCurrentPassword(t *testing.T) {
+	database := openAuthTestDB(t)
+	tmpl := makeAuthTemplates(t)
+
+	h := handlers.ChangePasswordHandler(database, tmpl)
+	form := url.Values{
+		"current_password": {"wrongpassword"},
+		"new_password":     {"newpass123"},
+		"confirm_password": {"newpass123"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/change-password", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie(t, "admin"))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "Current password is incorrect") {
+		t.Errorf("expected incorrect-password error, got: %s", rr.Body.String())
+	}
+
+	// Password should be unchanged.
+	admin, _ := database.AuthenticateAdmin("admin", "foobar")
+	if admin == nil {
+		t.Error("original password should still work")
+	}
+}
+
+// TestChangePasswordHandler_PasswordMismatch shows an error when new passwords do not match.
+func TestChangePasswordHandler_PasswordMismatch(t *testing.T) {
+	database := openAuthTestDB(t)
+	tmpl := makeAuthTemplates(t)
+
+	h := handlers.ChangePasswordHandler(database, tmpl)
+	form := url.Values{
+		"current_password": {"foobar"},
+		"new_password":     {"newpass123"},
+		"confirm_password": {"different"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/change-password", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie(t, "admin"))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "do not match") {
+		t.Errorf("expected mismatch error, got: %s", rr.Body.String())
 	}
 }
