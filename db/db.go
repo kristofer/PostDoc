@@ -16,13 +16,31 @@ var pragmaNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Document represents a stored document record.
 type Document struct {
-	ID         int64
-	Slug       string
-	Filename   string
-	Path       string
-	UploadedBy string
-	UploadedAt time.Time
-	Size       int64
+	ID             int64
+	Slug           string
+	Filename       string
+	Path           string
+	UploadedBy     string
+	UploadedAt     time.Time
+	Size           int64
+	TrackDownloads bool
+	DownloadCount  int
+}
+
+// DownloadEvent represents a single tracked download event.
+type DownloadEvent struct {
+	ID           int64
+	DocumentID   int64
+	Email        string
+	DownloadedAt time.Time
+}
+
+// FmtDownloadedAt returns the download timestamp formatted for display.
+func (e DownloadEvent) FmtDownloadedAt() string {
+	if e.DownloadedAt.IsZero() {
+		return "—"
+	}
+	return e.DownloadedAt.UTC().Format("2006-01-02 15:04 UTC")
 }
 
 // FmtSize returns the document file size in a human-readable format.
@@ -135,18 +153,25 @@ func configure(conn *sql.DB) error {
 func migrate(conn *sql.DB) error {
 	_, err := conn.Exec(`
 		CREATE TABLE IF NOT EXISTS documents (
-			id          INTEGER PRIMARY KEY AUTOINCREMENT,
-			slug        TEXT    NOT NULL UNIQUE,
-			filename    TEXT    NOT NULL,
-			path        TEXT    NOT NULL,
-			uploaded_by TEXT    NOT NULL DEFAULT '',
-			uploaded_at TEXT    NOT NULL DEFAULT '',
-			size        INTEGER NOT NULL DEFAULT 0
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			slug            TEXT    NOT NULL UNIQUE,
+			filename        TEXT    NOT NULL,
+			path            TEXT    NOT NULL,
+			uploaded_by     TEXT    NOT NULL DEFAULT '',
+			uploaded_at     TEXT    NOT NULL DEFAULT '',
+			size            INTEGER NOT NULL DEFAULT 0,
+			track_downloads INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE TABLE IF NOT EXISTS admins (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
 			username      TEXT    NOT NULL UNIQUE,
 			password_hash TEXT    NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS download_events (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			document_id   INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+			email         TEXT    NOT NULL,
+			downloaded_at TEXT    NOT NULL DEFAULT ''
 		);
 	`)
 	if err != nil {
@@ -157,6 +182,7 @@ func migrate(conn *sql.DB) error {
 		`ALTER TABLE documents ADD COLUMN uploaded_by TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE documents ADD COLUMN uploaded_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE documents ADD COLUMN size INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE documents ADD COLUMN track_downloads INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := conn.Exec(stmt); err != nil && !isDuplicateColumn(err) {
 			return err
@@ -192,11 +218,15 @@ func (d *DB) seedDefaultAdmin() error {
 }
 
 // InsertDocument inserts a new document record and returns its assigned id.
-func (d *DB) InsertDocument(slug, filename, path, uploadedBy string, size int64) (int64, error) {
+func (d *DB) InsertDocument(slug, filename, path, uploadedBy string, size int64, trackDownloads bool) (int64, error) {
+	td := 0
+	if trackDownloads {
+		td = 1
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := d.conn.Exec(
-		`INSERT INTO documents (slug, filename, path, uploaded_by, uploaded_at, size) VALUES (?, ?, ?, ?, ?, ?)`,
-		slug, filename, path, uploadedBy, now, size,
+		`INSERT INTO documents (slug, filename, path, uploaded_by, uploaded_at, size, track_downloads) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		slug, filename, path, uploadedBy, now, size, td,
 	)
 	if err != nil {
 		return 0, err
@@ -207,12 +237,13 @@ func (d *DB) InsertDocument(slug, filename, path, uploadedBy string, size int64)
 // GetBySlug fetches the document with the given slug, or returns nil if not found.
 func (d *DB) GetBySlug(slug string) (*Document, error) {
 	row := d.conn.QueryRow(
-		`SELECT id, slug, filename, path, uploaded_by, uploaded_at, size FROM documents WHERE slug = ?`,
+		`SELECT id, slug, filename, path, uploaded_by, uploaded_at, size, track_downloads FROM documents WHERE slug = ?`,
 		slug,
 	)
 	doc := &Document{}
 	var uploadedAt string
-	err := row.Scan(&doc.ID, &doc.Slug, &doc.Filename, &doc.Path, &doc.UploadedBy, &uploadedAt, &doc.Size)
+	var trackDownloads int
+	err := row.Scan(&doc.ID, &doc.Slug, &doc.Filename, &doc.Path, &doc.UploadedBy, &uploadedAt, &doc.Size, &trackDownloads)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -222,6 +253,30 @@ func (d *DB) GetBySlug(slug string) (*Document, error) {
 	if uploadedAt != "" {
 		doc.UploadedAt, _ = time.Parse(time.RFC3339, uploadedAt)
 	}
+	doc.TrackDownloads = trackDownloads != 0
+	return doc, nil
+}
+
+// GetDocumentByID fetches the document with the given id, or returns nil if not found.
+func (d *DB) GetDocumentByID(id int64) (*Document, error) {
+	row := d.conn.QueryRow(
+		`SELECT id, slug, filename, path, uploaded_by, uploaded_at, size, track_downloads FROM documents WHERE id = ?`,
+		id,
+	)
+	doc := &Document{}
+	var uploadedAt string
+	var trackDownloads int
+	err := row.Scan(&doc.ID, &doc.Slug, &doc.Filename, &doc.Path, &doc.UploadedBy, &uploadedAt, &doc.Size, &trackDownloads)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if uploadedAt != "" {
+		doc.UploadedAt, _ = time.Parse(time.RFC3339, uploadedAt)
+	}
+	doc.TrackDownloads = trackDownloads != 0
 	return doc, nil
 }
 
@@ -248,7 +303,9 @@ func (d *DB) ListDocuments(page, pageSize int) ([]Document, error) {
 	}
 	offset := (page - 1) * pageSize
 	rows, err := d.conn.Query(
-		`SELECT id, slug, filename, path, uploaded_by, uploaded_at, size FROM documents ORDER BY id DESC LIMIT ? OFFSET ?`,
+		`SELECT d.id, d.slug, d.filename, d.path, d.uploaded_by, d.uploaded_at, d.size, d.track_downloads,
+		        (SELECT COUNT(*) FROM download_events de WHERE de.document_id = d.id) AS download_count
+		 FROM documents d ORDER BY d.id DESC LIMIT ? OFFSET ?`,
 		pageSize, offset,
 	)
 	if err != nil {
@@ -259,12 +316,14 @@ func (d *DB) ListDocuments(page, pageSize int) ([]Document, error) {
 	for rows.Next() {
 		var doc Document
 		var uploadedAt string
-		if err := rows.Scan(&doc.ID, &doc.Slug, &doc.Filename, &doc.Path, &doc.UploadedBy, &uploadedAt, &doc.Size); err != nil {
+		var trackDownloads int
+		if err := rows.Scan(&doc.ID, &doc.Slug, &doc.Filename, &doc.Path, &doc.UploadedBy, &uploadedAt, &doc.Size, &trackDownloads, &doc.DownloadCount); err != nil {
 			return nil, err
 		}
 		if uploadedAt != "" {
 			doc.UploadedAt, _ = time.Parse(time.RFC3339, uploadedAt)
 		}
+		doc.TrackDownloads = trackDownloads != 0
 		docs = append(docs, doc)
 	}
 	return docs, rows.Err()
@@ -315,6 +374,41 @@ func (d *DB) DeleteDocuments(ids []int64) ([]string, error) {
 		return nil, err
 	}
 	return paths, nil
+}
+
+// InsertDownloadEvent records a new download event for a document.
+func (d *DB) InsertDownloadEvent(documentID int64, email string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := d.conn.Exec(
+		`INSERT INTO download_events (document_id, email, downloaded_at) VALUES (?, ?, ?)`,
+		documentID, email, now,
+	)
+	return err
+}
+
+// ListDownloadEvents returns all download events for the given document, ordered by most recent.
+func (d *DB) ListDownloadEvents(documentID int64) ([]DownloadEvent, error) {
+	rows, err := d.conn.Query(
+		`SELECT id, document_id, email, downloaded_at FROM download_events WHERE document_id = ? ORDER BY id DESC`,
+		documentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []DownloadEvent
+	for rows.Next() {
+		var e DownloadEvent
+		var downloadedAt string
+		if err := rows.Scan(&e.ID, &e.DocumentID, &e.Email, &downloadedAt); err != nil {
+			return nil, err
+		}
+		if downloadedAt != "" {
+			e.DownloadedAt, _ = time.Parse(time.RFC3339, downloadedAt)
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
 }
 
 // ---- Admin methods ----

@@ -61,7 +61,7 @@ func TestDocumentsHandler_WithDocs(t *testing.T) {
 	database, _ := openDocsTestDB(t)
 	tmpl := makeDocsTemplate(t)
 
-	if _, err := database.InsertDocument("report.pdf", "Report.pdf", "/tmp/report.pdf", "alice", 1024); err != nil {
+	if _, err := database.InsertDocument("report.pdf", "Report.pdf", "/tmp/report.pdf", "alice", 1024, false); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 
@@ -90,7 +90,7 @@ func TestDocumentsHandler_Pagination(t *testing.T) {
 	// Insert 35 documents (> default page size of 30).
 	for i := 0; i < 35; i++ {
 		slug := "slug-" + string(rune('a'+(i%26))) + string(rune('a'+(i/26)))
-		if _, err := database.InsertDocument(slug, slug+".pdf", "/tmp/"+slug, "admin", 0); err != nil {
+		if _, err := database.InsertDocument(slug, slug+".pdf", "/tmp/"+slug, "admin", 0, false); err != nil {
 			t.Fatalf("insert %d: %v", i, err)
 		}
 	}
@@ -125,7 +125,7 @@ func TestDeleteDocumentsHandler_Success(t *testing.T) {
 	if err := os.WriteFile(pdfPath, []byte("fake"), 0o640); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	id, err := database.InsertDocument("todelete.pdf", "ToDelete.pdf", pdfPath, "admin", 4)
+	id, err := database.InsertDocument("todelete.pdf", "ToDelete.pdf", pdfPath, "admin", 4, false)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}

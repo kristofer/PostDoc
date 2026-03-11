@@ -18,6 +18,17 @@ import (
 // nonAlphaNum matches any character that is not alphanumeric or a hyphen.
 var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
 
+// emailRe is a basic pattern for validating email addresses.
+// It covers the common address formats used in practice. Full RFC 5322
+// compliance (e.g. quoted local parts, comments, IP literals) is intentionally
+// out of scope for this application.
+var emailRe = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+
+// validEmail reports whether s looks like a valid email address.
+func validEmail(s string) bool {
+	return emailRe.MatchString(s)
+}
+
 // slugify turns a filename (without extension) into a URL-safe slug.
 func slugify(name string) string {
 	s := strings.ToLower(name)
@@ -110,11 +121,12 @@ func UploadHandler(database *db.DB, uploadDir string, tmpl *template.Template, b
 
 		// Persist metadata in the DB.
 		uploadedBy, _ := auth.UsernameFromRequest(r)
+		trackDownloads := r.FormValue("track_downloads") == "on"
 		var fileSize int64
 		if info, err := os.Stat(destPath); err == nil {
 			fileSize = info.Size()
 		}
-		if _, err := database.InsertDocument(slug, header.Filename, destPath, uploadedBy, fileSize); err != nil {
+		if _, err := database.InsertDocument(slug, header.Filename, destPath, uploadedBy, fileSize, trackDownloads); err != nil {
 			log.Printf("db insert error: %v", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
@@ -131,8 +143,9 @@ func UploadHandler(database *db.DB, uploadDir string, tmpl *template.Template, b
 	}
 }
 
-// ServeDocument serves the PDF file for a given slug.
-func ServeDocument(database *db.DB) http.HandlerFunc {
+// ServeDocument serves the PDF file for a given slug (GET).
+// If the document has download tracking enabled, an email form is shown first.
+func ServeDocument(database *db.DB, tmpl *template.Template) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slug := strings.TrimPrefix(r.URL.Path, "/")
 		if slug == "" {
@@ -151,6 +164,76 @@ func ServeDocument(database *db.DB) http.HandlerFunc {
 			return
 		}
 
+		// If tracking is enabled, show the email prompt form instead of the PDF.
+		if doc.TrackDownloads {
+			if err := tmpl.ExecuteTemplate(w, "email_prompt.html", map[string]interface{}{
+				"Slug":     slug,
+				"Filename": doc.Filename,
+			}); err != nil {
+				log.Printf("template error: %v", err)
+			}
+			return
+		}
+
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf(`inline; filename="%s"`, doc.Filename))
+		w.Header().Set("Content-Type", "application/pdf")
+		http.ServeFile(w, r, doc.Path)
+	}
+}
+
+// ServeDocumentPost handles POST /{slug} — validates the submitted email address,
+// records a download event, and then serves the PDF.
+func ServeDocumentPost(database *db.DB, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := strings.TrimPrefix(r.URL.Path, "/")
+		if slug == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		doc, err := database.GetBySlug(slug)
+		if err != nil {
+			log.Printf("db lookup error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		if doc == nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		// If tracking is not enabled for this document, redirect to the GET handler.
+		if !doc.TrackDownloads {
+			http.Redirect(w, r, "/"+slug, http.StatusSeeOther)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		email := strings.TrimSpace(r.FormValue("email"))
+		if !validEmail(email) {
+			if err := tmpl.ExecuteTemplate(w, "email_prompt.html", map[string]interface{}{
+				"Slug":     slug,
+				"Filename": doc.Filename,
+				"Error":    "Please enter a valid email address.",
+			}); err != nil {
+				log.Printf("template error: %v", err)
+			}
+			return
+		}
+
+		// Record the download event.
+		if err := database.InsertDownloadEvent(doc.ID, email); err != nil {
+			log.Printf("insert download event error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Serve the PDF.
 		w.Header().Set("Content-Disposition",
 			fmt.Sprintf(`inline; filename="%s"`, doc.Filename))
 		w.Header().Set("Content-Type", "application/pdf")
