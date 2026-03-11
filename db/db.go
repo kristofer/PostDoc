@@ -296,6 +296,44 @@ func (d *DB) CountDocuments() (int, error) {
 	return n, err
 }
 
+// scanDocumentRows iterates over the given rows and scans each into a Document.
+// It closes rows when done (or on error).
+func scanDocumentRows(rows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+}) ([]Document, error) {
+	var docs []Document
+	for rows.Next() {
+		var doc Document
+		var uploadedAt string
+		var trackDownloads int
+		if err := rows.Scan(&doc.ID, &doc.Slug, &doc.Filename, &doc.Path, &doc.UploadedBy, &uploadedAt, &doc.Size, &trackDownloads, &doc.DownloadCount); err != nil {
+			return nil, err
+		}
+		if uploadedAt != "" {
+			doc.UploadedAt, _ = time.Parse(time.RFC3339, uploadedAt)
+		}
+		doc.TrackDownloads = trackDownloads != 0
+		docs = append(docs, doc)
+	}
+	return docs, rows.Err()
+}
+
+// ListAllDocuments returns all documents ordered by most recently uploaded.
+func (d *DB) ListAllDocuments() ([]Document, error) {
+	rows, err := d.conn.Query(
+		`SELECT d.id, d.slug, d.filename, d.path, d.uploaded_by, d.uploaded_at, d.size, d.track_downloads,
+		        (SELECT COUNT(*) FROM download_events de WHERE de.document_id = d.id) AS download_count
+		 FROM documents d ORDER BY d.id DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDocumentRows(rows)
+}
+
 // ListDocuments returns a page of documents ordered by most recently uploaded.
 func (d *DB) ListDocuments(page, pageSize int) ([]Document, error) {
 	if page < 1 {
@@ -312,21 +350,7 @@ func (d *DB) ListDocuments(page, pageSize int) ([]Document, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var docs []Document
-	for rows.Next() {
-		var doc Document
-		var uploadedAt string
-		var trackDownloads int
-		if err := rows.Scan(&doc.ID, &doc.Slug, &doc.Filename, &doc.Path, &doc.UploadedBy, &uploadedAt, &doc.Size, &trackDownloads, &doc.DownloadCount); err != nil {
-			return nil, err
-		}
-		if uploadedAt != "" {
-			doc.UploadedAt, _ = time.Parse(time.RFC3339, uploadedAt)
-		}
-		doc.TrackDownloads = trackDownloads != 0
-		docs = append(docs, doc)
-	}
-	return docs, rows.Err()
+	return scanDocumentRows(rows)
 }
 
 // DeleteDocuments removes the documents with the given ids and returns the

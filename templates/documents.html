@@ -72,6 +72,20 @@
     .btn-delete:hover { background: #e74c3c; color: #fff; }
     .btn-delete:disabled { opacity: 0.4; cursor: default; }
     .btn-delete:disabled:hover { background: none; color: #e74c3c; }
+    .btn-csv {
+      background: none;
+      border: 1px solid #1a73e8;
+      color: #1a73e8;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: background .2s, color .2s;
+      display: inline-block;
+    }
+    .btn-csv:hover { background: #1a73e8; color: #fff; }
     .error {
       background: #fdecea;
       color: #c0392b;
@@ -153,6 +167,7 @@
     <div class="card-header">
       <h2>Uploaded Documents</h2>
       <span class="count">{{.TotalDocs}} document{{if ne .TotalDocs 1}}s{{end}} total</span>
+      <a href="/documents/csv" class="btn-csv">⬇ Download CSV</a>
       <button id="btn-delete-selected" class="btn-delete" disabled
         onclick="openDeleteModal()">Delete Selected</button>
     </div>
