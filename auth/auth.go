@@ -26,6 +26,13 @@ func Init(s []byte, secure bool) {
 	secureCookie = secure
 }
 
+// SecureCookies reports whether cookies should have the Secure flag set (i.e.
+// the server is running behind HTTPS). This should be checked when setting any
+// additional cookies that must match the security posture of session cookies.
+func SecureCookies() bool {
+	return secureCookie
+}
+
 // GenerateToken creates a signed JWT for the given username.
 func GenerateToken(username string) (string, error) {
 	claims := jwt.MapClaims{
