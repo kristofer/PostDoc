@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"html/template"
 	"log"
 	"net/http"
@@ -136,6 +137,39 @@ func DeleteDocumentsHandler(database *db.DB, tmpl *template.Template, baseURL st
 		}
 		if err := tmpl.ExecuteTemplate(w, "documents.html", data); err != nil {
 			log.Printf("template error: %v", err)
+		}
+	}
+}
+
+// DocumentsCSVHandler serves a CSV download of all documents (GET /documents/csv).
+func DocumentsCSVHandler(database *db.DB, baseURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		docs, err := database.ListAllDocuments()
+		if err != nil {
+			log.Printf("list all documents error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="documents.csv"`)
+
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"id", "filename", "uploaded_by", "uploaded_at", "size_bytes", "url", "download_count"})
+		for _, doc := range docs {
+			_ = cw.Write([]string{
+				strconv.FormatInt(doc.ID, 10),
+				doc.Filename,
+				doc.UploadedBy,
+				doc.FmtUploadedAt(),
+				strconv.FormatInt(doc.Size, 10),
+				baseURL + "/" + doc.Slug,
+				strconv.Itoa(doc.DownloadCount),
+			})
+		}
+		cw.Flush()
+		if err := cw.Error(); err != nil {
+			log.Printf("csv write error: %v", err)
 		}
 	}
 }

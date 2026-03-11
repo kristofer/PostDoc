@@ -44,6 +44,20 @@
     }
     .card-header h2 { font-size: 1.2rem; color: #333; }
     .card-header .meta { font-size: 0.9rem; color: #666; margin-top: 0.3rem; }
+    .btn-csv {
+      display: inline-block;
+      margin-top: 0.6rem;
+      background: none;
+      border: 1px solid #1a73e8;
+      color: #1a73e8;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: background .2s, color .2s;
+    }
+    .btn-csv:hover { background: #1a73e8; color: #fff; }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     th { text-align: left; padding: 0.5rem 0.6rem; color: #666; font-weight: 600; border-bottom: 2px solid #eee; white-space: nowrap; }
     td { padding: 0.6rem 0.6rem; border-bottom: 1px solid #eee; word-break: break-all; }
@@ -68,6 +82,7 @@
     <div class="card-header">
       <h2>{{.Document.Filename}}</h2>
       <p class="meta">{{len .Events}} download{{if ne (len .Events) 1}}s{{end}} recorded</p>
+      {{if .Events}}<a href="/documents/{{.Document.ID}}/downloads/csv" class="btn-csv">⬇ Download CSV</a>{{end}}
     </div>
 
     {{if .Events}}

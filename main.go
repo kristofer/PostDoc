@@ -92,8 +92,10 @@ func main() {
 
 	// Protected: document tracking.
 	mux.Handle("GET /documents", auth.Middleware(handlers.DocumentsHandler(database, tmpl, base)))
+	mux.Handle("GET /documents/csv", auth.Middleware(handlers.DocumentsCSVHandler(database, base)))
 	mux.Handle("POST /documents/delete", auth.Middleware(handlers.DeleteDocumentsHandler(database, tmpl, base)))
 	mux.Handle("GET /documents/{id}/downloads", auth.Middleware(handlers.DownloadEventsHandler(database, tmpl)))
+	mux.Handle("GET /documents/{id}/downloads/csv", auth.Middleware(handlers.DownloadEventsCSVHandler(database)))
 
 	// Public: short-link document serving.
 	mux.Handle("GET /{slug}", handlers.ServeDocument(database, tmpl))
