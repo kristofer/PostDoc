@@ -15,6 +15,11 @@ import (
 	"github.com/kristofer/postdoc/db"
 )
 
+// pdfReadyCookie is the name of the short-lived cookie set after a download
+// event is recorded. Its presence allows the GET handler to serve the PDF
+// directly (PRG pattern) without requiring a second email submission.
+const pdfReadyCookie = "pdf_ready"
+
 // nonAlphaNum matches any character that is not alphanumeric or a hyphen.
 var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -164,6 +169,18 @@ func ServeDocument(database *db.DB, tmpl *template.Template) http.HandlerFunc {
 			return
 		}
 
+		// If a valid pdf_ready cookie is present (set by the POST handler after
+		// recording the download event), serve the PDF directly. This is the
+		// "Get" step of the Post-Redirect-Get pattern and prevents the browser
+		// from making additional POST requests that would double-count downloads.
+		if cookie, err := r.Cookie(pdfReadyCookie); err == nil && cookie.Value == slug {
+			w.Header().Set("Content-Disposition",
+				fmt.Sprintf(`inline; filename="%s"`, doc.Filename))
+			w.Header().Set("Content-Type", "application/pdf")
+			http.ServeFile(w, r, doc.Path)
+			return
+		}
+
 		// If tracking is enabled, show the email prompt form instead of the PDF.
 		if doc.TrackDownloads {
 			if err := tmpl.ExecuteTemplate(w, "email_prompt.html", map[string]interface{}{
@@ -233,10 +250,19 @@ func ServeDocumentPost(database *db.DB, tmpl *template.Template) http.HandlerFun
 			return
 		}
 
-		// Serve the PDF.
-		w.Header().Set("Content-Disposition",
-			fmt.Sprintf(`inline; filename="%s"`, doc.Filename))
-		w.Header().Set("Content-Type", "application/pdf")
-		http.ServeFile(w, r, doc.Path)
+		// Post-Redirect-Get: set a short-lived cookie so the GET handler can
+		// serve the PDF directly, then redirect. This prevents browsers and
+		// PDF viewers from re-POSTing the form (which would double-count the
+		// download event on every subsequent request).
+		http.SetCookie(w, &http.Cookie{
+			Name:     pdfReadyCookie,
+			Value:    slug,
+			Path:     "/" + slug,
+			HttpOnly: true,
+			Secure:   auth.SecureCookies(),
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   60,
+		})
+		http.Redirect(w, r, "/"+slug, http.StatusSeeOther)
 	}
 }

@@ -298,12 +298,25 @@ func TestServeDocumentPost_ValidEmail(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	// With the PRG pattern the POST handler redirects (303) rather than
+	// serving the PDF directly.
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d: %s", rr.Code, rr.Body.String())
 	}
-	ct := rr.Header().Get("Content-Type")
-	if !strings.HasPrefix(ct, "application/pdf") {
-		t.Errorf("expected application/pdf, got %s", ct)
+	if loc := rr.Header().Get("Location"); loc != "/tracked.pdf" {
+		t.Errorf("expected redirect to /tracked.pdf, got %q", loc)
+	}
+
+	// Confirm the pdf_ready cookie was set.
+	cookies := rr.Result().Cookies()
+	var gotCookie bool
+	for _, c := range cookies {
+		if c.Name == "pdf_ready" && c.Value == "tracked.pdf" {
+			gotCookie = true
+		}
+	}
+	if !gotCookie {
+		t.Error("expected pdf_ready cookie to be set")
 	}
 
 	// Confirm download event was recorded.
@@ -386,96 +399,82 @@ func TestServeDocumentPost_NoTracking_Redirects(t *testing.T) {
 	}
 }
 
+// TestServeDocument_WithPdfReadyCookie_ServesPDF verifies that the GET handler
+// serves the PDF directly when a valid pdf_ready cookie is present (the "Get"
+// step of the Post-Redirect-Get pattern).
+func TestServeDocument_WithPdfReadyCookie_ServesPDF(t *testing.T) {
+	database, dir := setupDB(t)
+
+	pdfPath := filepath.Join(dir, "cookied.pdf")
+	if err := os.WriteFile(pdfPath, minimalPDF, 0o640); err != nil {
+		t.Fatalf("write pdf: %v", err)
+	}
+	if _, err := database.InsertDocument("cookied.pdf", "Cookied.pdf", pdfPath, "", 0, true); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	emailTmpl, err := template.New("email_prompt.html").Parse(`EMAIL_PROMPT`)
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
+
+	h := handlers.ServeDocument(database, emailTmpl)
+	req := httptest.NewRequest(http.MethodGet, "/cookied.pdf", nil)
+	req.AddCookie(&http.Cookie{Name: "pdf_ready", Value: "cookied.pdf"})
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	ct := rr.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/pdf") {
+		t.Errorf("expected application/pdf content type, got %s", ct)
+	}
+}
+
+// TestServeDocumentPost_MultipleDownloads_CountCorrect verifies that each
+// POST submission records exactly one download event (PRG redirect path).
 func TestServeDocumentPost_MultipleDownloads_CountCorrect(t *testing.T) {
-database, dir := setupDB(t)
+	database, dir := setupDB(t)
 
-pdfPath := filepath.Join(dir, "multidown.pdf")
-if err := os.WriteFile(pdfPath, minimalPDF, 0o640); err != nil {
-t.Fatalf("write pdf: %v", err)
-}
+	pdfPath := filepath.Join(dir, "multidown.pdf")
+	if err := os.WriteFile(pdfPath, minimalPDF, 0o640); err != nil {
+		t.Fatalf("write pdf: %v", err)
+	}
 
-docID, err := database.InsertDocument("multidown.pdf", "MultiDown.pdf", pdfPath, "", 0, true)
-if err != nil {
-t.Fatalf("insert: %v", err)
-}
+	docID, err := database.InsertDocument("multidown.pdf", "MultiDown.pdf", pdfPath, "", 0, true)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
 
-emailTmpl, err := template.New("email_prompt.html").Parse(`EMAIL_PROMPT`)
-if err != nil {
-t.Fatalf("parse template: %v", err)
-}
+	emailTmpl, err := template.New("email_prompt.html").Parse(`EMAIL_PROMPT`)
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
 
-h := handlers.ServeDocumentPost(database, emailTmpl)
+	mux := http.NewServeMux()
+	mux.Handle("GET /{slug}", handlers.ServeDocument(database, emailTmpl))
+	mux.Handle("POST /{slug}", handlers.ServeDocumentPost(database, emailTmpl))
+	server := httptest.NewServer(mux)
+	defer server.Close()
 
-for i := 1; i <= 4; i++ {
-form := strings.NewReader("email=user%40example.com")
-req := httptest.NewRequest(http.MethodPost, "/multidown.pdf", form)
-req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-rr := httptest.NewRecorder()
-h(rr, req)
+	client := &http.Client{}
 
-events, err := database.ListDownloadEvents(docID)
-if err != nil {
-t.Fatalf("download %d: list events: %v", i, err)
-}
-if len(events) != i {
-t.Errorf("after download %d: expected %d events, got %d", i, i, len(events))
-}
-}
-}
+	for i := 1; i <= 4; i++ {
+		resp, err := client.PostForm(server.URL+"/multidown.pdf",
+			map[string][]string{"email": {"user@example.com"}})
+		if err != nil {
+			t.Fatalf("download %d: %v", i, err)
+		}
+		resp.Body.Close()
 
-func TestServeDocumentPost_MultipleDownloads_WithRealServer(t *testing.T) {
-database, dir := setupDB(t)
-
-pdfPath := filepath.Join(dir, "rsvr.pdf")
-if err := os.WriteFile(pdfPath, minimalPDF, 0o640); err != nil {
-t.Fatalf("write pdf: %v", err)
-}
-
-docID, err := database.InsertDocument("rsvr.pdf", "RealServer.pdf", pdfPath, "", 0, true)
-if err != nil {
-t.Fatalf("insert: %v", err)
-}
-
-emailTmpl, err := template.New("email_prompt.html").Parse(`EMAIL_PROMPT`)
-if err != nil {
-t.Fatalf("parse template: %v", err)
-}
-
-mux := http.NewServeMux()
-mux.Handle("GET /{slug}", handlers.ServeDocument(database, emailTmpl))
-mux.Handle("POST /{slug}", handlers.ServeDocumentPost(database, emailTmpl))
-
-server := httptest.NewServer(mux)
-defer server.Close()
-
-var redirectLog []string
-client := &http.Client{
-CheckRedirect: func(req *http.Request, via []*http.Request) error {
-redirectLog = append(redirectLog,
-via[len(via)-1].Method+" -> "+req.Method+" "+req.URL.String())
-return nil
-},
-}
-
-for i := 1; i <= 4; i++ {
-redirectLog = nil
-resp, err := client.PostForm(server.URL+"/rsvr.pdf",
-map[string][]string{"email": {"user@example.com"}})
-if err != nil {
-t.Fatalf("download %d: %v", i, err)
-}
-resp.Body.Close()
-
-if len(redirectLog) > 0 {
-t.Logf("download %d: redirects: %v", i, redirectLog)
-}
-
-events, err := database.ListDownloadEvents(docID)
-if err != nil {
-t.Fatalf("download %d: list events: %v", i, err)
-}
-if len(events) != i {
-t.Errorf("after download %d: expected %d events, got %d (redirects: %v)", i, i, len(events), redirectLog)
-}
-}
+		events, err := database.ListDownloadEvents(docID)
+		if err != nil {
+			t.Fatalf("download %d: list events: %v", i, err)
+		}
+		if len(events) != i {
+			t.Errorf("after download %d: expected %d events, got %d", i, i, len(events))
+		}
+	}
 }
