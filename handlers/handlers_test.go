@@ -385,3 +385,97 @@ func TestServeDocumentPost_NoTracking_Redirects(t *testing.T) {
 		t.Errorf("expected redirect to /notrack.pdf, got %q", loc)
 	}
 }
+
+func TestServeDocumentPost_MultipleDownloads_CountCorrect(t *testing.T) {
+database, dir := setupDB(t)
+
+pdfPath := filepath.Join(dir, "multidown.pdf")
+if err := os.WriteFile(pdfPath, minimalPDF, 0o640); err != nil {
+t.Fatalf("write pdf: %v", err)
+}
+
+docID, err := database.InsertDocument("multidown.pdf", "MultiDown.pdf", pdfPath, "", 0, true)
+if err != nil {
+t.Fatalf("insert: %v", err)
+}
+
+emailTmpl, err := template.New("email_prompt.html").Parse(`EMAIL_PROMPT`)
+if err != nil {
+t.Fatalf("parse template: %v", err)
+}
+
+h := handlers.ServeDocumentPost(database, emailTmpl)
+
+for i := 1; i <= 4; i++ {
+form := strings.NewReader("email=user%40example.com")
+req := httptest.NewRequest(http.MethodPost, "/multidown.pdf", form)
+req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+rr := httptest.NewRecorder()
+h(rr, req)
+
+events, err := database.ListDownloadEvents(docID)
+if err != nil {
+t.Fatalf("download %d: list events: %v", i, err)
+}
+if len(events) != i {
+t.Errorf("after download %d: expected %d events, got %d", i, i, len(events))
+}
+}
+}
+
+func TestServeDocumentPost_MultipleDownloads_WithRealServer(t *testing.T) {
+database, dir := setupDB(t)
+
+pdfPath := filepath.Join(dir, "rsvr.pdf")
+if err := os.WriteFile(pdfPath, minimalPDF, 0o640); err != nil {
+t.Fatalf("write pdf: %v", err)
+}
+
+docID, err := database.InsertDocument("rsvr.pdf", "RealServer.pdf", pdfPath, "", 0, true)
+if err != nil {
+t.Fatalf("insert: %v", err)
+}
+
+emailTmpl, err := template.New("email_prompt.html").Parse(`EMAIL_PROMPT`)
+if err != nil {
+t.Fatalf("parse template: %v", err)
+}
+
+mux := http.NewServeMux()
+mux.Handle("GET /{slug}", handlers.ServeDocument(database, emailTmpl))
+mux.Handle("POST /{slug}", handlers.ServeDocumentPost(database, emailTmpl))
+
+server := httptest.NewServer(mux)
+defer server.Close()
+
+var redirectLog []string
+client := &http.Client{
+CheckRedirect: func(req *http.Request, via []*http.Request) error {
+redirectLog = append(redirectLog,
+via[len(via)-1].Method+" -> "+req.Method+" "+req.URL.String())
+return nil
+},
+}
+
+for i := 1; i <= 4; i++ {
+redirectLog = nil
+resp, err := client.PostForm(server.URL+"/rsvr.pdf",
+map[string][]string{"email": {"user@example.com"}})
+if err != nil {
+t.Fatalf("download %d: %v", i, err)
+}
+resp.Body.Close()
+
+if len(redirectLog) > 0 {
+t.Logf("download %d: redirects: %v", i, redirectLog)
+}
+
+events, err := database.ListDownloadEvents(docID)
+if err != nil {
+t.Fatalf("download %d: list events: %v", i, err)
+}
+if len(events) != i {
+t.Errorf("after download %d: expected %d events, got %d (redirects: %v)", i, i, len(events), redirectLog)
+}
+}
+}
